@@ -5,49 +5,61 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlin.math.roundToInt
 
-class DirectionTracker(
-    context: Context
-) : SensorEventListener {
+class DirectionTracker(context: Context) : SensorEventListener {
 
     private val sensorManager =
-        context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        context.applicationContext
+            .getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
     private val rotationSensor =
         sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
-    var azimuth: Float = 0f
+    private var isRegistered = false
+
+    var azimuth by mutableFloatStateOf(0f)
         private set
 
-    var direction: String = "N"
+    var direction by mutableStateOf("N")
         private set
 
-    fun start() {
+    val isSensorAvailable: Boolean
+        get() = rotationSensor != null
 
-        if (rotationSensor == null) {
-            return
-        }
+    private var hasFirstReading = false
+    private var smoothedAzimuth = 0f
 
-        sensorManager.registerListener(
+    fun start(): Boolean {
+        if (isRegistered) return true
+
+        val sensor = rotationSensor ?: return false
+
+        isRegistered = sensorManager.registerListener(
             this,
-            rotationSensor,
+            sensor,
             SensorManager.SENSOR_DELAY_UI
         )
+
+        // The first reading after starting becomes the smoothing baseline.
+        hasFirstReading = false
+
+        return isRegistered
     }
 
     fun stop() {
-
-        sensorManager.unregisterListener(this)
+        if (isRegistered) {
+            sensorManager.unregisterListener(this)
+            isRegistered = false
+        }
     }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-
-        if (event == null) return
-
-        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) {
-            return
-        }
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
 
         val rotationMatrix = FloatArray(9)
 
@@ -63,30 +75,37 @@ class DirectionTracker(
             orientation
         )
 
-        var degrees =
-            Math.toDegrees(
-                orientation[0].toDouble()
-            ).toFloat()
+        val rawDegrees = Math.toDegrees(
+            orientation[0].toDouble()
+        ).toFloat()
 
-        if (degrees < 0) {
-            degrees += 360f
+        val heading = (rawDegrees + 360f) % 360f
+
+        if (!hasFirstReading) {
+            smoothedAzimuth = heading
+            hasFirstReading = true
+        } else {
+            // Calculate the shortest change, including when crossing 0°/360°.
+            val difference =
+                ((heading - smoothedAzimuth + 540f) % 360f) - 180f
+
+            // Smaller multiplier = steadier display, slower response.
+            smoothedAzimuth =
+                (smoothedAzimuth + difference * 0.12f + 360f) % 360f
         }
 
-        azimuth = degrees
-        direction = getDirectionName(degrees)
+        azimuth = (smoothedAzimuth.roundToInt() % 360).toFloat()
+        direction = getDirectionName(smoothedAzimuth)
     }
 
     override fun onAccuracyChanged(
         sensor: Sensor?,
         accuracy: Int
     ) {
-        // We don't need anything here yet.
+        // No action needed for this basic heading display.
     }
 
-    private fun getDirectionName(
-        degrees: Float
-    ): String {
-
+    private fun getDirectionName(degrees: Float): String {
         return when {
             degrees >= 337.5f || degrees < 22.5f -> "N"
             degrees < 67.5f -> "NE"
