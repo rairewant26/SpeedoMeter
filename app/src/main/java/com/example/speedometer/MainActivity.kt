@@ -1,39 +1,97 @@
 package com.example.speedometer
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.example.speedometer.sensors.DirectionTracker
-import com.example.speedometer.ui.DirectionScreen
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import com.example.speedometer.screens.SpeedScreen
+import com.example.speedometer.tracker.SpeedTracker
 import com.example.speedometer.ui.theme.SpeedoMeterTheme
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var directionTracker: DirectionTracker
+    private lateinit var speedTracker: SpeedTracker
+
+    private var permissionMessage by mutableStateOf<String?>(null)
+
+    private val locationPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+
+            val fineGranted =
+                permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+
+            val coarseGranted =
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+            if (fineGranted || coarseGranted) {
+                permissionMessage = null
+                speedTracker.start()
+            } else {
+                permissionMessage =
+                    "Location permission denied. Tap Start to try again."
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        directionTracker = DirectionTracker(applicationContext)
+        speedTracker = SpeedTracker(applicationContext)
 
         setContent {
             SpeedoMeterTheme {
-                DirectionScreen(
-                    azimuth = directionTracker.azimuth,
-                    direction = directionTracker.direction,
-                    sensorAvailable = directionTracker.isSensorAvailable
+                SpeedScreen(
+                    speedKmh = speedTracker.speedKmh,
+                    status = permissionMessage ?: speedTracker.status,
+                    onStartClick = {
+                        if (hasLocationPermission()) {
+                            permissionMessage = null
+                            speedTracker.start()
+                        } else {
+                            requestLocationPermission()
+                        }
+                    },
+                    onStopClick = {
+                        permissionMessage = null
+                        speedTracker.stop()
+                    }
                 )
             }
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        directionTracker.start()
+    override fun onPause() {
+        speedTracker.stop()
+        super.onPause()
     }
 
-    override fun onPause() {
-        directionTracker.stop()
-        super.onPause()
+    private fun requestLocationPermission() {
+        locationPermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        )
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        return fineGranted || coarseGranted
     }
 }
